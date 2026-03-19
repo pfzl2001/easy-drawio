@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Easy Draw.io</title>
+  <link rel="stylesheet" href="sidebar.css">
+</head>
+
+<body>
+  <!-- Top Toolbar -->
+  <div class="toolbar" id="toolbar">
+    <div class="toolbar-left">
+      <div class="toolbar-brand">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="8" y="14" width="8" height="7" rx="1" />
+          <line x1="6.5" y1="10" x2="6.5" y2="14" stroke="currentColor" stroke-dasharray="2 1" />
+          <line x1="17.5" y1="10" x2="17.5" y2="14" stroke="currentColor" stroke-dasharray="2 1" />
+          <line x1="6.5" y1="14" x2="12" y2="14" />
+          <line x1="17.5" y1="14" x2="12" y2="14" />
+        </svg>
+        <span class="brand-text">Easy Draw.io</span>
+      </div>
+    </div>
+    <div class="toolbar-actions">
+      <button class="btn btn-icon" id="btn-new" title="New Diagram">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="12" y1="18" x2="12" y2="12" />
+          <line x1="9" y1="15" x2="15" y2="15" />
+        </svg>
+      </button>
+      <button class="btn btn-icon" id="btn-save" title="Save">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+          <polyline points="17 21 17 13 7 13 7 21" />
+          <polyline points="7 3 7 8 15 8" />
+        </svg>
+      </button>
+      <button class="btn btn-icon" id="btn-export" title="Export">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+      </button>
+      <div class="toolbar-divider"></div>
+      <button class="btn btn-icon btn-accent" id="btn-code" title="Import Code (Mermaid/PlantUML)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+          <line x1="14" y1="4" x2="10" y2="20" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Export Menu (hidden by default) -->
+  <div class="dropdown-menu" id="export-menu">
+    <button class="dropdown-item" data-format="xml">
+      <span class="format-icon">📄</span> Export as XML
+    </button>
+    <button class="dropdown-item" data-format="png">
+      <span class="format-icon">🖼️</span> Export as PNG
+    </button>
+    <button class="dropdown-item" data-format="svg">
+      <span class="format-icon">🎨</span> Export as SVG
+    </button>
+  </div>
+
+  <!-- Code Import Modal -->
+  <div class="modal-overlay" id="code-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Import Code as Diagram</h3>
+        <button class="btn btn-icon btn-sm" id="btn-close-code" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="code-type">Code Formats</label>
+          <select id="code-type" class="form-select">
+            <option value="drawio-xml">Draw.io XML</option>
+            <option value="mermaid">Mermaid</option>
+            <option value="plantuml">PlantUML</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="code-input">Code</label>
+          <textarea id="code-input" class="form-textarea" rows="10" placeholder="graph TD;
+  A[Start] --> B{Decision};
+  B -->|Yes| C[Action 1];
+  B -->|No| D[Action 2];
+  C --> E[End];
+  D --> E;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-code">Cancel</button>
+        <button class="btn btn-primary" id="btn-insert-code">Insert Diagram</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-bar" id="status-bar">
+    <span class="status-text" id="status-text">Loading Draw.io...</span>
+    <span class="status-file" id="status-file"></span>
+  </div>
+
+  <!-- Draw.io iframe -->
+  <iframe id="drawio-frame"
+    src="https://embed.diagrams.net/?embed=1&ui=min&spin=1&proto=json&noSaveBtn=0&noExitBtn=1&saveAndExit=0"
+    allow="fullscreen"></iframe>
+
+  <script src="sidebar.js"></script>
+</body>
+
+</html>
