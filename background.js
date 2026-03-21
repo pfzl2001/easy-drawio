@@ -42,6 +42,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     return true; // Keep the message channel open for asynchronous response
   }
+
+  // 5. Relay xmlDetected from content script to ALL extension pages (sidebar)
+  if (request.action === "xmlDetected" && request.xml) {
+    // Forward to all extension contexts (the sidebar will pick it up)
+    chrome.runtime.sendMessage({
+      action: 'xmlDetectedForSidebar',
+      xml: request.xml,
+      sourceTabId: sender.tab ? sender.tab.id : null,
+    }).catch(() => {
+      // Sidebar might not be open, that's fine
+    });
+    sendResponse({ received: true });
+    return false;
+  }
 });
 
 // 4. Clean up storage data when a tab is closed

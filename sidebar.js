@@ -14,6 +14,7 @@
 
     let currentTabId = null;
     let drawioIsReady = false;
+    let pendingExportName = null;
 
     // DOM References
     const iframe = document.getElementById('drawio-frame');
@@ -174,7 +175,8 @@
 
     function handleExport(msg) {
         if (!msg.data) return;
-        const fileName = `diagram_tab_${currentTabId || 'export'}`;
+        const fileName = pendingExportName || `diagram_tab_${currentTabId || 'export'}`;
+        pendingExportName = null; // reset
 
         if (msg.format === 'xml' || msg.format === 'svg') {
             downloadTextFile(msg.data, `${fileName}.${msg.format}`, `application/${msg.format === 'svg' ? 'svg+xml' : 'xml'}`);
@@ -206,19 +208,27 @@
     }
 
     function requestExport(format) {
-        if (format === 'xml') {
+        const defaultName = `diagram_tab_${currentTabId || 'export'}`;
+        let customName = prompt("Enter file name for export:", defaultName);
+        if (customName === null || customName.trim() === '') return; // User cancelled
+
+        // Clean up extension if user accidentally typed it
+        customName = customName.replace(/\.(xml|png|svg|drawio)$/i, '').trim() || defaultName;
+
+        if (format === 'xml' || format === 'drawio') {
             // Get latest state directly from storage instead of asking iframe
             const storageKey = getStorageKey();
             chrome.storage.local.get([storageKey], function (result) {
                 if (result[storageKey]) {
-                    const fileName = `diagram_tab_${currentTabId || 'export'}`;
-                    downloadTextFile(result[storageKey], `${fileName}.xml`, 'application/xml');
-                    showToast('Exported as XML', 'success');
+                    const extension = format === 'drawio' ? '.drawio' : '.xml';
+                    downloadTextFile(result[storageKey], `${customName}${extension}`, 'application/xml');
+                    showToast(`Exported as ${format.toUpperCase()}`, 'success');
                 } else {
                     showToast('No diagram to export', 'error');
                 }
             });
         } else {
+            pendingExportName = customName;
             sendToDrawio({
                 action: 'export',
                 format: format,
@@ -287,6 +297,85 @@
             .replace(/\//g, '_')
             .replace(/=+$/, '');
     }
+
+    // ==========================================
+    // Auto-Detect XML from AI Pages
+    // ==========================================
+
+    let autoUpdateEnabled = true; // default ON
+    let pendingXml = null;
+    const notifyBar = document.getElementById('notify-bar');
+    const btnAutoUpdate = document.getElementById('btn-auto-update');
+
+    // Load auto-update preference
+    chrome.storage.local.get(['easydrawio_auto_update'], (result) => {
+        if (result.easydrawio_auto_update !== undefined) {
+            autoUpdateEnabled = result.easydrawio_auto_update;
+        }
+        updateAutoUpdateUI();
+    });
+
+    function updateAutoUpdateUI() {
+        if (btnAutoUpdate) {
+            btnAutoUpdate.classList.toggle('auto-on', autoUpdateEnabled);
+            btnAutoUpdate.classList.toggle('auto-off', !autoUpdateEnabled);
+            btnAutoUpdate.title = `Auto-update: ${autoUpdateEnabled ? 'ON' : 'OFF'} (click to toggle)`;
+        }
+    }
+
+    function toggleAutoUpdate() {
+        autoUpdateEnabled = !autoUpdateEnabled;
+        chrome.storage.local.set({ easydrawio_auto_update: autoUpdateEnabled });
+        updateAutoUpdateUI();
+        showToast(`Auto-update ${autoUpdateEnabled ? 'enabled' : 'disabled'}`, 'info');
+    }
+
+    function showNotifyBar(xml) {
+        pendingXml = xml;
+        if (notifyBar) notifyBar.classList.add('visible');
+    }
+
+    function hideNotifyBar() {
+        pendingXml = null;
+        if (notifyBar) notifyBar.classList.remove('visible');
+    }
+
+    function applyPendingXml() {
+        if (pendingXml) {
+            renderXmlToDrawio(pendingXml);
+            showToast('Diagram updated from AI response!', 'success');
+            hideNotifyBar();
+        }
+    }
+
+    // Listen for XML detected messages from background (relayed from content script)
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.action === 'xmlDetectedForSidebar' && request.xml) {
+            // Only accept if it's from the same tab we're bound to
+            if (currentTabId !== null && request.sourceTabId !== null && request.sourceTabId !== currentTabId) {
+                return; // Ignore XML from other tabs
+            }
+
+            if (autoUpdateEnabled) {
+                // Auto-update: render immediately
+                renderXmlToDrawio(request.xml);
+                showToast('Diagram auto-updated from AI!', 'success');
+            } else {
+                // Manual mode: show notification bar
+                showNotifyBar(request.xml);
+            }
+        }
+    });
+
+    // Bind auto-update toggle button
+    if (btnAutoUpdate) btnAutoUpdate.addEventListener('click', toggleAutoUpdate);
+
+    // Bind notification bar buttons
+    const btnNotifyUpdate = document.getElementById('btn-notify-update');
+    if (btnNotifyUpdate) btnNotifyUpdate.addEventListener('click', applyPendingXml);
+
+    const btnNotifyDismiss = document.getElementById('btn-notify-dismiss');
+    if (btnNotifyDismiss) btnNotifyDismiss.addEventListener('click', hideNotifyBar);
 
     // ==========================================
     // UI: Toggles & Event Listeners

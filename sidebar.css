@@ -642,3 +642,63 @@ body {
   font-size: 13px;
   outline: none;
 }
+
+/* ==========================================
+   Notification Bar (XML Auto-Detect)
+   ========================================== */
+
+.notify-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, rgba(74, 144, 217, 0.15), rgba(46, 196, 182, 0.12));
+  border-bottom: 1px solid var(--accent);
+  animation: slideDown 250ms ease;
+  flex-shrink: 0;
+  z-index: 95;
+}
+
+.notify-bar.visible {
+  display: flex;
+}
+
+.notify-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.notify-text {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-sm-pad {
+  padding: 4px 10px !important;
+  font-size: 11px !important;
+}
+
+/* ==========================================
+   Auto-Update Toggle Active State
+   ========================================== */
+
+#btn-auto-update.auto-on {
+  color: var(--success) !important;
+  background: rgba(46, 196, 182, 0.15);
+}
+
+#btn-auto-update.auto-off {
+  color: var(--text-muted) !important;
+}

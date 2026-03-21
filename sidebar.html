@@ -56,13 +56,31 @@
           <line x1="14" y1="4" x2="10" y2="20" />
         </svg>
       </button>
+      <div class="toolbar-divider"></div>
+      <button class="btn btn-icon" id="btn-auto-update" title="Auto-update: ON (click to toggle)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 4v6h6" />
+          <path d="M23 20v-6h-6" />
+          <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- XML Detection Notification Bar (hidden by default) -->
+  <div class="notify-bar" id="notify-bar">
+    <span class="notify-icon">🔔</span>
+    <span class="notify-text">New Draw.io XML detected from AI!</span>
+    <div class="notify-actions">
+      <button class="btn btn-primary btn-sm-pad" id="btn-notify-update">Update Diagram</button>
+      <button class="btn btn-secondary btn-sm-pad" id="btn-notify-dismiss">Dismiss</button>
     </div>
   </div>
 
   <!-- Export Menu (hidden by default) -->
   <div class="dropdown-menu" id="export-menu">
-    <button class="dropdown-item" data-format="xml">
-      <span class="format-icon">📄</span> Export as XML
+    <button class="dropdown-item" data-format="drawio">
+      <span class="format-icon">📄</span> Export as .drawio
     </button>
     <button class="dropdown-item" data-format="png">
       <span class="format-icon">🖼️</span> Export as PNG
