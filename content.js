@@ -1,22 +1,20 @@
 /**
  * Easy Draw.io - Content Script
- * Uses MutationObserver to detect Draw.io XML (<mxGraphModel>) in AI chat responses.
- * Event-driven, zero polling. Debounced to handle streaming token output.
+ * Detects Draw.io XML / Mermaid / PlantUML in AI chat responses via MutationObserver.
+ * Full-document scanning with debounce — robust against streaming token output.
  */
 
 (function () {
   'use strict';
 
-  // Track already-detected XML to avoid re-notifying
   const detectedHashes = new Set();
   let debounceTimer = null;
-  const DEBOUNCE_MS = 1500; // Wait 1.5s of DOM silence before scanning
+  const DEBOUNCE_MS = 1500;
 
-  // Regex to extract complete <mxGraphModel ...>...</mxGraphModel> blocks
   const MX_REGEX = /<mxGraphModel[\s\S]*?<\/mxGraphModel>/g;
 
   /**
-   * Simple fast hash for deduplication (djb2)
+   * djb2 hash for fast deduplication
    */
   function hashString(str) {
     let hash = 5381;
@@ -26,42 +24,65 @@
     return hash.toString(36);
   }
 
+  function sendDetected(payload, type) {
+    try {
+      chrome.runtime.sendMessage({
+        action: 'xmlDetected',
+        xml: payload,
+        type: type || 'xml',
+      });
+    } catch (e) {
+      // Extension context invalidated — silently ignore
+    }
+  }
+
   /**
-   * Scan newly added nodes for Draw.io XML content.
-   * Only checks text inside <code>, <pre>, or generic text nodes.
+   * Scan the ENTIRE document for recognizable diagram code blocks.
+   * This avoids the problem of only scanning recently-added nodes
+   * (which breaks under streaming output where earlier batches are lost by debounce).
    */
-  function scanForXml(nodes) {
-    for (const node of nodes) {
-      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+  function scanDocument() {
+    const codeBlocks = document.querySelectorAll('code, pre');
 
-      // Get text content from code blocks and pre tags primarily
-      const codeBlocks = node.querySelectorAll
-        ? node.querySelectorAll('code, pre')
-        : [];
+    for (const block of codeBlocks) {
+      const text = block.textContent || '';
 
-      const targets = codeBlocks.length > 0 ? codeBlocks : [node];
-
-      for (const target of targets) {
-        const text = target.textContent || '';
-        if (text.length < 30 || !text.includes('<mxGraphModel')) continue;
-
+      // --- Draw.io XML detection ---
+      if (text.length >= 30 && text.includes('<mxGraphModel')) {
         const matches = text.match(MX_REGEX);
-        if (!matches) continue;
+        if (matches) {
+          for (const xml of matches) {
+            const hash = hashString(xml);
+            if (detectedHashes.has(hash)) continue;
+            detectedHashes.add(hash);
+            sendDetected(xml, 'xml');
+          }
+        }
+      }
 
-        for (const xml of matches) {
-          const hash = hashString(xml);
-          if (detectedHashes.has(hash)) continue;
+      // --- Mermaid detection (code blocks with language-mermaid class) ---
+      if (block.tagName === 'CODE') {
+        const cls = block.className || '';
+        if (cls.includes('mermaid') || cls.includes('language-mermaid')) {
+          const trimmed = text.trim();
+          if (trimmed.length >= 10) {
+            const hash = hashString('mermaid:' + trimmed);
+            if (!detectedHashes.has(hash)) {
+              detectedHashes.add(hash);
+              sendDetected(trimmed, 'mermaid');
+            }
+          }
+        }
 
-          detectedHashes.add(hash);
-
-          // Send the detected XML to the background service worker
-          try {
-            chrome.runtime.sendMessage({
-              action: 'xmlDetected',
-              xml: xml,
-            });
-          } catch (e) {
-            // Extension context invalidated, ignore
+        // --- PlantUML detection ---
+        if (cls.includes('plantuml') || cls.includes('language-plantuml') || cls.includes('puml') || cls.includes('language-puml')) {
+          const trimmed = text.trim();
+          if (trimmed.length >= 10) {
+            const hash = hashString('plantuml:' + trimmed);
+            if (!detectedHashes.has(hash)) {
+              detectedHashes.add(hash);
+              sendDetected(trimmed, 'plantuml');
+            }
           }
         }
       }
@@ -69,34 +90,28 @@
   }
 
   /**
-   * MutationObserver callback — debounced to handle streaming AI output.
+   * Debounced handler — any DOM change schedules a full scan after 1.5s of silence.
    */
-  function onMutation(mutations) {
+  function onMutation() {
     clearTimeout(debounceTimer);
-
-    // Collect all newly added nodes across all mutations
-    const addedNodes = [];
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList') {
-        for (const node of mutation.addedNodes) {
-          addedNodes.push(node);
-        }
-      }
-    }
-
-    if (addedNodes.length === 0) return;
-
-    // Debounce: wait for DOM to settle (AI finishes streaming)
-    debounceTimer = setTimeout(() => {
-      scanForXml(addedNodes);
-    }, DEBOUNCE_MS);
+    debounceTimer = setTimeout(scanDocument, DEBOUNCE_MS);
   }
 
-  // Start observing once DOM is ready
-  const observer = new MutationObserver(onMutation);
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
+  // Start observing — childList + characterData + subtree covers all streaming patterns
+  if (document.body) {
+    const observer = new MutationObserver(onMutation);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  // Initial scan for content already present when the script loads
+  if (document.readyState === 'complete') {
+    setTimeout(scanDocument, 1000);
+  } else {
+    window.addEventListener('load', () => setTimeout(scanDocument, 1000));
+  }
 
 })();

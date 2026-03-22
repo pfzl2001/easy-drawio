@@ -15,6 +15,7 @@
     let currentTabId = null;
     let drawioIsReady = false;
     let pendingExportName = null;
+    let saveToStorageFlag = false;
 
     // DOM References
     const iframe = document.getElementById('drawio-frame');
@@ -50,21 +51,23 @@
     // Draw.io Communication & Tab Data Loading
     // ==========================================
 
-    /**
-     * Get the current Tab ID from the Background script to isolate data.
-     */
-    chrome.runtime.sendMessage({ action: "getTabId" }, function (response) {
-        if (response && response.tabId) {
-            currentTabId = response.tabId;
-            statusFile.textContent = `Tab Context: #${currentTabId}`;
-            if (drawioIsReady) {
-                loadDataForCurrentTab();
+    function requestTabId() {
+        chrome.runtime.sendMessage({ action: 'getTabId' }, function (response) {
+            if (chrome.runtime.lastError) return;
+            if (response && response.tabId) {
+                const isNewTab = currentTabId !== response.tabId;
+                currentTabId = response.tabId;
+                statusFile.textContent = `Tab Context: #${currentTabId}`;
+                if (isNewTab && drawioIsReady) {
+                    loadDataForCurrentTab();
+                }
+            } else {
+                statusFile.textContent = 'Global Context';
             }
-        } else {
-            showToast('Warning: Running outside standard tab context', 'warning');
-            statusFile.textContent = `Global Context`;
-        }
-    });
+        });
+    }
+
+    requestTabId();
 
     function getStorageKey() {
         return currentTabId ? `drawio_data_tab_${currentTabId}` : 'drawio_data_global';
@@ -86,7 +89,7 @@
      * Send an action to the Draw.io iframe using the embed protocol.
      */
     function sendToDrawio(message) {
-        if (iframe.contentWindow) {
+        if (iframe && iframe.contentWindow) {
             iframe.contentWindow.postMessage(JSON.stringify(message), '*');
         }
     }
@@ -109,9 +112,6 @@
             case 'init':
                 drawioIsReady = true;
                 updateStatus('Connected', true);
-
-                // If we already resolved the tabId, load the right data
-                // Otherwise it will be loaded later when the tabId message returns
                 if (currentTabId !== null) {
                     loadDataForCurrentTab();
                 }
@@ -125,7 +125,6 @@
                         updateStatus(msg.event === 'autosave' ? 'Auto-saved' : 'Saved', true);
                         if (msg.event === 'save') {
                             showToast('Diagram saved for this tab', 'success');
-                            // Tell Draw.io save successful
                             sendToDrawio({ action: 'status', message: 'Saved', modified: false });
                         }
                     });
@@ -152,12 +151,10 @@
     }
 
     /**
-     * Master function: rendering XML directly to Draw.io
-     * @param {string} xmlString Draw.io format XML model data
+     * Render XML directly to Draw.io
      */
     function renderXmlToDrawio(xmlString) {
         if (!drawioIsReady) {
-            console.warn("Draw.io is not ready yet.");
             showToast('Rendering queued (Draw.io not ready)', 'warning');
             return;
         }
@@ -165,7 +162,7 @@
         sendToDrawio({
             action: 'load',
             xml: xmlString,
-            autosave: 1, // trigger autosave after load
+            autosave: 1,
         });
     }
 
@@ -174,9 +171,23 @@
     // ==========================================
 
     function handleExport(msg) {
+        // If this export was triggered by the Save button, persist to storage instead of downloading
+        if (saveToStorageFlag) {
+            saveToStorageFlag = false;
+            if (msg.data) {
+                const storageKey = getStorageKey();
+                chrome.storage.local.set({ [storageKey]: msg.data }, () => {
+                    updateStatus('Saved', true);
+                    showToast('Diagram saved for this tab', 'success');
+                    sendToDrawio({ action: 'status', message: 'Saved', modified: false });
+                });
+            }
+            return;
+        }
+
         if (!msg.data) return;
         const fileName = pendingExportName || `diagram_tab_${currentTabId || 'export'}`;
-        pendingExportName = null; // reset
+        pendingExportName = null;
 
         if (msg.format === 'xml' || msg.format === 'svg') {
             downloadTextFile(msg.data, `${fileName}.${msg.format}`, `application/${msg.format === 'svg' ? 'svg+xml' : 'xml'}`);
@@ -209,14 +220,12 @@
 
     function requestExport(format) {
         const defaultName = `diagram_tab_${currentTabId || 'export'}`;
-        let customName = prompt("Enter file name for export:", defaultName);
-        if (customName === null || customName.trim() === '') return; // User cancelled
+        let customName = prompt('Enter file name for export:', defaultName);
+        if (customName === null || customName.trim() === '') return;
 
-        // Clean up extension if user accidentally typed it
         customName = customName.replace(/\.(xml|png|svg|drawio)$/i, '').trim() || defaultName;
 
         if (format === 'xml' || format === 'drawio') {
-            // Get latest state directly from storage instead of asking iframe
             const storageKey = getStorageKey();
             chrome.storage.local.get([storageKey], function (result) {
                 if (result[storageKey]) {
@@ -239,6 +248,15 @@
     }
 
     // ==========================================
+    // Save (to storage, not download)
+    // ==========================================
+
+    function triggerSave() {
+        saveToStorageFlag = true;
+        sendToDrawio({ action: 'export', format: 'xml' });
+    }
+
+    // ==========================================
     // UI: Status
     // ==========================================
 
@@ -256,38 +274,48 @@
     // Code-to-Diagram Interface
     // ==========================================
 
+    function convertMermaidToXml(code) {
+        return `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="2" value="" style="shape=mxgraph.mermaid.abstract.mermaid;link=data:text/plain,${encodeURIComponent(code)};" vertex="1" parent="1">
+        <mxGeometry x="20" y="20" width="400" height="300" as="geometry"/>
+      </mxCell>
+    </root></mxGraphModel>`;
+    }
+
+    function convertPlantumlToXml(code) {
+        return `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
+      <mxCell id="2" value="" style="shape=image;editableCssRules=.*;image=https://www.plantuml.com/plantuml/svg/~1${plantumlEncode(code)};" vertex="1" parent="1">
+        <mxGeometry x="20" y="20" width="400" height="300" as="geometry"/>
+      </mxCell>
+    </root></mxGraphModel>`;
+    }
+
     function insertDiagramFromCode(codeType, codeString) {
         if (!codeString || !codeString.trim()) {
             showToast('Please enter some code/XML', 'error');
             return;
         }
 
-        let xml;
+        const trimmed = codeString.trim();
 
         if (codeType === 'drawio-xml') {
-            // Direct XML rendering (fulfilling Requirement 1)
-            renderXmlToDrawio(codeString.trim());
+            renderXmlToDrawio(trimmed);
             showToast('Imported Draw.io XML', 'success');
             closeCodeModal();
             return;
-        } else if (codeType === 'mermaid') {
-            const encodedCode = codeString.trim();
-            xml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
-          <mxCell id="2" value="" style="shape=mxgraph.mermaid.abstract.mermaid;link=data:text/plain,${encodeURIComponent(encodedCode)};" vertex="1" parent="1">
-            <mxGeometry x="20" y="20" width="400" height="300" as="geometry"/>
-          </mxCell>
-        </root></mxGraphModel>`;
-        } else if (codeType === 'plantuml') {
-            const encodedCode = codeString.trim();
-            xml = `<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/>
-          <mxCell id="2" value="" style="shape=image;editableCssRules=.*;image=https://www.plantuml.com/plantuml/svg/~1${plantumlEncode(encodedCode)};" vertex="1" parent="1">
-            <mxGeometry x="20" y="20" width="400" height="300" as="geometry"/>
-          </mxCell>
-        </root></mxGraphModel>`;
         }
 
-        renderXmlToDrawio(xml);
-        showToast(`Inserted ${codeType} diagram`, 'success');
+        let xml;
+        if (codeType === 'mermaid') {
+            xml = convertMermaidToXml(trimmed);
+        } else if (codeType === 'plantuml') {
+            xml = convertPlantumlToXml(trimmed);
+        }
+
+        if (xml) {
+            renderXmlToDrawio(xml);
+            showToast(`Inserted ${codeType} diagram`, 'success');
+        }
         closeCodeModal();
     }
 
@@ -299,15 +327,14 @@
     }
 
     // ==========================================
-    // Auto-Detect XML from AI Pages
+    // Auto-Detect from AI Pages (Feature 6)
     // ==========================================
 
-    let autoUpdateEnabled = true; // default ON
-    let pendingXml = null;
+    let autoUpdateEnabled = true;
+    let pendingDetection = null;
     const notifyBar = document.getElementById('notify-bar');
     const btnAutoUpdate = document.getElementById('btn-auto-update');
 
-    // Load auto-update preference
     chrome.storage.local.get(['easydrawio_auto_update'], (result) => {
         if (result.easydrawio_auto_update !== undefined) {
             autoUpdateEnabled = result.easydrawio_auto_update;
@@ -330,39 +357,74 @@
         showToast(`Auto-update ${autoUpdateEnabled ? 'enabled' : 'disabled'}`, 'info');
     }
 
-    function showNotifyBar(xml) {
-        pendingXml = xml;
-        if (notifyBar) notifyBar.classList.add('visible');
-    }
-
-    function hideNotifyBar() {
-        pendingXml = null;
-        if (notifyBar) notifyBar.classList.remove('visible');
-    }
-
-    function applyPendingXml() {
-        if (pendingXml) {
-            renderXmlToDrawio(pendingXml);
-            showToast('Diagram updated from AI response!', 'success');
-            hideNotifyBar();
+    function showNotifyBar(payload, type) {
+        pendingDetection = { payload, type };
+        if (notifyBar) {
+            const typeLabels = { xml: 'Draw.io XML', mermaid: 'Mermaid', plantuml: 'PlantUML' };
+            const label = typeLabels[type] || 'Draw.io XML';
+            const textEl = notifyBar.querySelector('.notify-text');
+            if (textEl) textEl.textContent = `New ${label} detected from AI!`;
+            notifyBar.classList.add('visible');
         }
     }
 
-    // Listen for XML detected messages from background (relayed from content script)
+    function hideNotifyBar() {
+        pendingDetection = null;
+        if (notifyBar) notifyBar.classList.remove('visible');
+    }
+
+    function applyPendingDetection() {
+        if (!pendingDetection) return;
+        const xml = resolveDetectedXml(pendingDetection.payload, pendingDetection.type);
+        renderXmlToDrawio(xml);
+        showToast('Diagram updated from AI response!', 'success');
+        hideNotifyBar();
+    }
+
+    /**
+     * Convert detected payload to Draw.io XML based on its type.
+     */
+    function resolveDetectedXml(payload, type) {
+        if (type === 'mermaid') return convertMermaidToXml(payload);
+        if (type === 'plantuml') return convertPlantumlToXml(payload);
+        return payload; // already XML
+    }
+
+    // Listen for messages from background (content script relay + tab events)
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+
+        // AI-detected diagram code
         if (request.action === 'xmlDetectedForSidebar' && request.xml) {
-            // Only accept if it's from the same tab we're bound to
             if (currentTabId !== null && request.sourceTabId !== null && request.sourceTabId !== currentTabId) {
-                return; // Ignore XML from other tabs
+                return; // Ignore from other tabs
             }
 
+            const type = request.type || 'xml';
+
             if (autoUpdateEnabled) {
-                // Auto-update: render immediately
-                renderXmlToDrawio(request.xml);
+                const xml = resolveDetectedXml(request.xml, type);
+                renderXmlToDrawio(xml);
                 showToast('Diagram auto-updated from AI!', 'success');
             } else {
-                // Manual mode: show notification bar
-                showNotifyBar(request.xml);
+                showNotifyBar(request.xml, type);
+            }
+        }
+
+        // Tab switched — reload data for the newly active tab
+        if (request.action === 'tabActivated' && request.tabId) {
+            if (currentTabId !== request.tabId) {
+                currentTabId = request.tabId;
+                statusFile.textContent = `Tab Context: #${currentTabId}`;
+                if (drawioIsReady) {
+                    loadDataForCurrentTab();
+                }
+            }
+        }
+
+        // Tab page reloaded — re-request tab context
+        if (request.action === 'tabUpdated' && request.tabId) {
+            if (request.tabId === currentTabId) {
+                updateStatus('Page refreshed', true);
             }
         }
     });
@@ -372,7 +434,7 @@
 
     // Bind notification bar buttons
     const btnNotifyUpdate = document.getElementById('btn-notify-update');
-    if (btnNotifyUpdate) btnNotifyUpdate.addEventListener('click', applyPendingXml);
+    if (btnNotifyUpdate) btnNotifyUpdate.addEventListener('click', applyPendingDetection);
 
     const btnNotifyDismiss = document.getElementById('btn-notify-dismiss');
     if (btnNotifyDismiss) btnNotifyDismiss.addEventListener('click', hideNotifyBar);
@@ -408,10 +470,6 @@
 
     function closeAllMenus() {
         closeExportMenu();
-    }
-
-    function triggerSave() {
-        sendToDrawio({ action: 'export', format: 'xmlsvg', exit: false });
     }
 
     // Bind Buttons

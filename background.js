@@ -1,67 +1,72 @@
 /**
  * Easy Draw.io - Background Service Worker
- * Handles tab-specific side panel behavior and data isolation.
+ * Handles tab-specific side panel behavior, message relay, and data isolation.
  */
 
-// 1. Enable native toggling of the side panel when the extension icon is clicked
+// Enable native toggling of the side panel when the extension icon is clicked
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
 
-// 2. Setup the side panel to be tab-specific so its instance doesn't follow across tabs globally
+// Tab-specific side panel setup + notify sidebar on tab switch
 chrome.tabs.onActivated.addListener((activeInfo) => {
   chrome.sidePanel.setOptions({
     tabId: activeInfo.tabId,
     path: 'sidebar.html',
-    enabled: true
-  }).catch(() => { });
+    enabled: true,
+  }).catch(() => {});
+
+  chrome.runtime.sendMessage({
+    action: 'tabActivated',
+    tabId: activeInfo.tabId,
+  }).catch(() => {});
 });
 
-// Also re-enable when a tab is updated (like refreshing the page)
-chrome.tabs.onUpdated.addListener((tabId) => {
+// Re-enable panel on tab refresh and notify sidebar when navigation completes
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   chrome.sidePanel.setOptions({
     tabId: tabId,
     path: 'sidebar.html',
-    enabled: true
-  }).catch(() => { });
+    enabled: true,
+  }).catch(() => {});
+
+  if (changeInfo.status === 'complete') {
+    chrome.runtime.sendMessage({
+      action: 'tabUpdated',
+      tabId: tabId,
+    }).catch(() => {});
+  }
 });
 
-// 3. Provide the Tab ID to the sidebar when requested
+// Central message router
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "getTabId") {
-    // `sender.tab` contains the info of the tab where the sidebar is opened
+
+  // Provide the active Tab ID to the sidebar
+  if (request.action === 'getTabId') {
     if (sender.tab) {
       sendResponse({ tabId: sender.tab.id });
     } else {
-      // Fallback: Query the active tab in the current window
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        if (tabs && tabs.length > 0) {
-          sendResponse({ tabId: tabs[0].id });
-        } else {
-          sendResponse({ tabId: null });
-        }
+        sendResponse({ tabId: (tabs && tabs.length > 0) ? tabs[0].id : null });
       });
     }
-    return true; // Keep the message channel open for asynchronous response
+    return true; // async sendResponse
   }
 
-  // 5. Relay xmlDetected from content script to ALL extension pages (sidebar)
-  if (request.action === "xmlDetected" && request.xml) {
-    // Forward to all extension contexts (the sidebar will pick it up)
+  // Relay detected diagram code from content script → sidebar
+  if (request.action === 'xmlDetected' && request.xml) {
+    const sourceTabId = sender.tab ? sender.tab.id : null;
     chrome.runtime.sendMessage({
       action: 'xmlDetectedForSidebar',
       xml: request.xml,
-      sourceTabId: sender.tab ? sender.tab.id : null,
-    }).catch(() => {
-      // Sidebar might not be open, that's fine
-    });
+      type: request.type || 'xml',
+      sourceTabId: sourceTabId,
+    }).catch(() => {});
     sendResponse({ received: true });
     return false;
   }
 });
 
-// 4. Clean up storage data when a tab is closed
-chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+// Clean up storage data when a tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
   const storageKey = `drawio_data_tab_${tabId}`;
-  chrome.storage.local.remove(storageKey, () => {
-    console.log(`Cleaned up storage for closed tab: ${storageKey}`);
-  });
+  chrome.storage.local.remove(storageKey);
 });
